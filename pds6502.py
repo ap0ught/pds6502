@@ -440,10 +440,11 @@ NO_OPERAND = {"else", "endif", "endm", "end", "macro", "page", "space"}
 # Keywords that take exactly one operand.
 ONE_OPERAND = {"bank", "=", "incbin", "include", "do", "free",
                "radix", "send"}
-# Keywords whose operand is the remainder of the line. Conditions and `equ`
-# expressions contain spaces: `if showcoins = 1`, `until mwn EQU 1`,
-# `dungeonschrs equ * - mapchrsdefs`.
-REST_OF_LINE = {"if", "until", "equ"}
+# Conditions and `equ` take an expression, and the expression may contain
+# spaces: `if showcoins = 1`, `until mwn EQU 1`, `dungeonschrs equ * - mapchrsdefs`.
+# The expression stops at the next statement. Magician writes several on one
+# line (`sc0 equ $2000 sc1 equ $2400`, `if *<$a000 ds $a000-*,$0`).
+EXPR_STMT = {"if", "until", "equ"}
 # Keywords that take up to N comma-separated arguments.
 N_OPERANDS = {"org": 2, "ds": 2, "defs": 2, "ifs": 2, "load": 5, "error": 1,
               "option": 2}
@@ -524,6 +525,50 @@ def words_of(line: str, lineno: int = 0) -> list[Word]:
     return out
 
 
+
+def expression_end(words: list[Word], i: int, keywords: set[str], *,
+                   comparisons: bool, macro_names: set[str] | None) -> int:
+    """Index where the expression starting at `i` ends.
+
+    A following statement is a directive, an instruction, a macro call, or a
+    label in front of one of those. `equ` and `=` stay inside the expression
+    when `comparisons` is set, because `if` and `until` use them as equality.
+    """
+    while i < len(words) and not _expression_stops(words, i, keywords, comparisons, macro_names):
+        i += 1
+    return i
+
+
+def _expression_stops(words: list[Word], i: int, keywords: set[str],
+                      comparisons: bool, macro_names: set[str] | None) -> bool:
+    text = words[i].text
+    low = text.lower()
+    # A directive, instruction, or macro call. `equ` / `=` inside `if` and
+    # `until` are equality, not a new assignment.
+    if _is_stmt_word(text, low, keywords, macro_names):
+        return not (comparisons and low in ("equ", "="))
+    # A label at column 0 of the next physical segment. `pi@1 equ li` / `endm`
+    # puts `li` in the expression and `endm` on the next segment.
+    if words[i].col0 and LABEL_RE.fullmatch(text) and not is_keyword(text, keywords):
+        return True
+    nxt = i + 1
+    if nxt < len(words) and LABEL_RE.fullmatch(text) and not is_keyword(text, keywords):
+        nlow = words[nxt].text.lower()
+        # `sc1 equ $2400` is the next assignment. `li endm` is not: `endm`
+        # takes no label, so `li` is still the value.
+        # A macro *call* is not in this list. `obchest equ obaorg` / `zp ...`
+        # would otherwise treat `obaorg` as a label. The call is caught when
+        # the loop reaches `zp` itself.
+        if nlow in ("equ", "=", "macro") or nlow in OPCODES:
+            return not (comparisons and nlow in ("equ", "="))
+    return False
+
+
+def _is_stmt_word(text: str, low: str, keywords: set[str],
+                  macro_names: set[str] | None) -> bool:
+    return is_keyword(text, keywords) or (macro_names is not None and low in macro_names)
+
+
 def comma_continues(words: list[Word], i: int) -> bool:
     """True when `words[i]` is another item of a comma-separated operand.
 
@@ -573,7 +618,12 @@ def scan_statements(words: list[Word], keywords: set[str], where: str,
             i += 1
             continue
         starts.append(i)
-        if is_keyword(words[i].text, keywords):
+        # `do`, `loop`, and `until` are directives, and Magician also uses
+        # them as labels (`loop bne loop`). A column-0 name followed by an
+        # instruction is the label. The directive form is indented.
+        label_directive = (words[i].col0 and low in ("do", "loop", "until")
+                           and i + 1 < n and words[i + 1].text.lower() in OPCODES)
+        if is_keyword(words[i].text, keywords) and not label_directive:
             low = words[i].text.lower()
             i += 1
         else:
@@ -586,8 +636,11 @@ def scan_statements(words: list[Word], keywords: set[str], where: str,
                 continue
         if low in NO_OPERAND:
             continue
-        if low in REST_OF_LINE:
-            i = n
+        if low in EXPR_STMT:
+            # `equ` inside `if` / `until` is equality (`until mwn EQU 1`).
+            # After an `equ` directive it is the next assignment.
+            i = expression_end(words, i, keywords, comparisons=low != "equ",
+                               macro_names=macro_names)
             continue
         if low == "hex":
             # `hex` takes runs of hex digits and nothing else, so a bare name
@@ -662,13 +715,18 @@ def scan_statements(words: list[Word], keywords: set[str], where: str,
         # A fragment that is only a name is a label definition, and a label is
         # in column 0 even when the logical line began with code.
         at = stmt_where(where, words, start)
+        named = words[start].text.lower()
+        # `loop` is a directive and, in column 0 in front of an instruction,
+        # a label (`cli / loop bne loop`). The tab would make Line() read the
+        # directive instead of the label.
+        col0_label = words[start].col0 and named in ("do", "loop", "until")
         if end - start == 1 and LABEL_RE.fullmatch(words[start].text) \
-                and not is_keyword(words[start].text, keywords):
+                and (not is_keyword(words[start].text, keywords) or col0_label):
             out.append(Line(at, text))
         else:
             # A fragment that opens with a name opens with a label, and a
             # label is in column 0 (`sqh` half way along x5's `sql` line).
-            lead = "" if not is_keyword(words[start].text, keywords) else "\t"
+            lead = "" if not is_keyword(words[start].text, keywords) or col0_label else "\t"
             out.append(Line(at, lead + text))
     return out
 
@@ -897,6 +955,10 @@ class Assembler:
         self.bank_segments: list[tuple[int, list[tuple[int, int]]]] = []
         self.open_seg: list[tuple[int, int]] = []
         self.ended = False
+        # PDS END stops the whole assembly, which is what keeps a later file
+        # such as JUNK out of the image. A build that appends modules after a
+        # source file's own END sets this false; END still ends that file.
+        self.stop_at_end = True
         # Assembler menu item "Swap < and >". 1 is the 6502 manual default:
         # `>` low, `<` high. 0 is the reverse. SETUP.PDS and `option 0,n`
         # override it. See do_option.
@@ -1270,7 +1332,7 @@ class Assembler:
                 self.run_file(path, slot=slot, origin=origins.get(path.name),
                               window_slots=window_slots.get(path.name),
                               addr_ceiling=ceilings.get(path.name))
-                if self.ended:
+                if self.ended and self.stop_at_end:
                     break
             current = dict(self.sym)
             if current == prev:
@@ -1288,7 +1350,7 @@ class Assembler:
             self.run_file(path, slot=slot, origin=origins.get(path.name),
                           window_slots=window_slots.get(path.name),
                           addr_ceiling=ceilings.get(path.name))
-            if self.ended:
+            if self.ended and self.stop_at_end:
                 break
         self.capture_banks = False
         return self

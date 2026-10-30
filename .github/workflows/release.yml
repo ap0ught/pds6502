@@ -1,0 +1,102 @@
+# Publish a GitHub Release with assembler source artifacts when a v* tag is pushed.
+#
+# Triggers:
+#   - Push of tags matching v*
+#   - workflow_dispatch with a tag name (creates the tag if missing, then releases)
+#
+# Artifacts are the Python sources games already consume via clone / PDS6502_HOME.
+# No compiled binaries: the assembler is stdlib-only Python.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Smoke test
+        run: |
+          python -m py_compile pds6502.py pds_extract.py tests/smoke_test.py
+          python tests/smoke_test.py
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ensure tag exists (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists"
+          else
+            git tag "${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+      - name: Build source archive
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          STAGE="pds6502-${TAG#v}"
+          mkdir -p dist/"$STAGE"
+          cp pds6502.py pds_extract.py README.md AGENTS.md dist/"$STAGE"/
+          cp -R examples docs .cursor dist/"$STAGE"/ 2>/dev/null || true
+          mkdir -p dist/"$STAGE"/tests
+          cp tests/smoke_test.py dist/"$STAGE"/tests/
+          (
+            cd dist
+            tar -czf "${STAGE}-source.tar.gz" "$STAGE"
+            zip -qr "${STAGE}-source.zip" "$STAGE"
+          )
+          sha256sum dist/"${STAGE}-source.tar.gz" dist/"${STAGE}-source.zip" \
+            | tee dist/SHA256SUMS
+          ls -la dist/
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ steps.tag.outputs.name }}
+          generate_release_notes: true
+          body: |
+            PDS 1.26 6502 assembler (stdlib Python).
+
+            Games continue to work by cloning this repo and setting `PDS6502_HOME`,
+            or by placing the checkout next to the game as `../pds6502`.
+
+            Attachments are a curated source tree (`pds6502.py`, `pds_extract.py`,
+            docs, examples). GitHub also attaches the full repository archive.
+          files: |
+            dist/*-source.tar.gz
+            dist/*-source.zip
+            dist/SHA256SUMS

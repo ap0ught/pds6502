@@ -1,5 +1,8 @@
 # pds6502
 
+[![CI](https://github.com/ap0ught/pds6502/actions/workflows/ci.yml/badge.svg)](https://github.com/ap0ught/pds6502/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ap0ught/pds6502)](https://github.com/ap0ught/pds6502/releases/latest)
+
 PDS 1.26 assembler for the Super Robin Hood and Magician sources. Both games
 assemble with this module. Each game keeps its own build script, because the
 cartridges are different machines: Super Robin Hood is mapper 71 with 16 KiB
@@ -60,3 +63,17 @@ the bytes each `bank` directive downloaded. Placing those bytes into an iNES
 ROM is the game's build. Super Robin Hood files mapper 71 banks. Magician
 searches MMC3 slots and reads the flat image. Pointing one game's build at the
 other source will put the bytes in the wrong places.
+
+## Releases
+
+Tagged releases (`v*`) publish a source archive of the assembler via
+[GitHub Actions](https://github.com/ap0ught/pds6502/actions/workflows/release.yml).
+Push a tag, or run the Release workflow from the Actions tab:
+
+```
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+Game builds that clone this repository (or set `PDS6502_HOME`) do not need the
+release artifacts; the tag is for pinned downloads and changelog tracking.

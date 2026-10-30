@@ -1,5 +1,4 @@
 {
   "name": "olivertwins-RE",
-  "install": "if [ -f magicianedit/package-lock.json ]; then\n  cd magicianedit\nelif [ -f repos/magicianedit/package-lock.json ]; then\n  cd repos/magicianedit\nfi\nnpm ci",
-  "start": "if [ -f magicianedit/package.json ]; then\n  cd magicianedit\nelif [ -f repos/magicianedit/package.json ]; then\n  cd repos/magicianedit\nfi\nexec npm run dev -- --host 0.0.0.0 --port 5173"
+  "install": "set -euo pipefail\nif [ -f pds6502.py ]; then\n  root=.\nelif [ -f pds6502/pds6502.py ]; then\n  root=pds6502\nelif [ -f repos/pds6502/pds6502.py ]; then\n  root=repos/pds6502\nelse\n  echo \"pds6502.py not found\" >&2\n  exit 1\nfi\npython3 -m py_compile \"$root/pds6502.py\" \"$root/pds_extract.py\" \"$root/tests/smoke_test.py\"\npython3 \"$root/tests/smoke_test.py\"\n"
 }

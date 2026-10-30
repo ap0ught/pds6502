@@ -1,4 +1,4 @@
 {
   "name": "olivertwins-RE",
-  "install": "set -euo pipefail\nif [ -f pds6502.py ]; then\n  root=.\nelif [ -f pds6502/pds6502.py ]; then\n  root=pds6502\nelif [ -f repos/pds6502/pds6502.py ]; then\n  root=repos/pds6502\nelse\n  echo \"pds6502.py not found\" >&2\n  exit 1\nfi\npython3 -m py_compile \"$root/pds6502.py\" \"$root/pds_extract.py\" \"$root/tests/smoke_test.py\"\npython3 \"$root/tests/smoke_test.py\"\n"
+  "install": "set -euo pipefail\nif [ -f pds6502.py ]; then\n  root=.\nelif [ -f pds6502/pds6502.py ]; then\n  root=pds6502\nelif [ -f repos/pds6502/pds6502.py ]; then\n  root=repos/pds6502\nelse\n  echo \"pds6502.py not found\" >&2\n  exit 1\nfi\npython3 -m py_compile \"$root/pds6502.py\" \"$root/pds_extract.py\" \"$root/tests/smoke_test.py\"\npython3 \"$root/tests/smoke_test.py\"\nif [ -d repos ]; then\n  editor_root=repos\nelse\n  editor_root=..\nfi\nfor editor in magicianedit robinedit; do\n  dir=\"$editor_root/$editor\"\n  if [ -f \"$dir/package-lock.json\" ]; then\n    npm ci --prefix \"$dir\"\n  fi\ndone\n"
 }
